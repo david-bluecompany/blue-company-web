@@ -4,7 +4,7 @@ After=network.target
 Wants=network.target
 
 [Service]
-Type=notify
+Type=simple
 User=bluecompany
 Group=bluecompany
 WorkingDirectory=/opt/blue-company-web

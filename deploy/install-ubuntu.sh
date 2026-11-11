@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Install BLUE COMPANY as an unprivileged systemd service. This does not open
-# firewall ports, configure SSH, or grant the web process root privileges.
 APP_NAME="blue-company-web"
 APP_USER="bluecompany"
 APP_GROUP="bluecompany"
@@ -10,42 +8,41 @@ APP_DIR="/opt/blue-company-web"
 DATA_DIR="/var/lib/blue-company"
 ETC_DIR="/etc/blue-company"
 ENV_FILE="${ETC_DIR}/panel.env"
-SERVICE_FILE="/etc/systemd/system/blue-company-web.service"
+SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 [[ "${EUID}" -eq 0 ]] || fail "Ejecuta con sudo: sudo bash deploy/install-ubuntu.sh"
-[[ -f "app.py" && -f "admin_cli.py" && -f "requirements.txt" && -d "templates" && -d "static" ]] || fail "Ejecuta este script desde la raíz del repositorio blue-company-web."
+[[ -f app.py && -f admin_cli.py && -f requirements.txt && -d templates && -d static && -f deploy/configure-https-3128.sh ]] || fail "Ejecuta desde la raíz del repositorio blue-company-web."
 [[ -f /etc/os-release ]] || fail "No se reconoce la distribución."
 . /etc/os-release
-[[ "${ID:-}" == "ubuntu" ]] || fail "Este instalador está preparado para Ubuntu (incluido Ubuntu 26.04)."
+[[ "${ID:-}" == ubuntu ]] || fail "Este instalador requiere Ubuntu."
 
-printf '\nBLUE COMPANY · instalación local segura en Ubuntu\n'
-printf 'La app escuchará en 127.0.0.1:8000; no cambia el firewall ni configura un dominio.\n\n'
-
+printf '\nBLUE COMPANY · Instalación Ubuntu\n'
+printf 'Servicio web local en 127.0.0.1:8000. No modifica firewall ni puertos de red.\n\n'
 read -r -p "Usuario administrador del panel: " ADMIN_USERNAME
-[[ "$ADMIN_USERNAME" =~ ^[a-zA-Z0-9_-]{1,32}$ ]] || fail "Usuario inválido (usa letras, números, guion o guion bajo; máximo 32)."
+[[ "$ADMIN_USERNAME" =~ ^[a-zA-Z0-9_-]{1,32}$ ]] || fail "Usuario inválido."
 read -r -s -p "Contraseña (mínimo 16 caracteres): " ADMIN_PASSWORD; printf '\n'
 read -r -s -p "Repite la contraseña: " ADMIN_PASSWORD_CONFIRM; printf '\n'
-[[ ${#ADMIN_PASSWORD} -ge 16 ]] || fail "La contraseña debe tener al menos 16 caracteres."
+[[ ${#ADMIN_PASSWORD} -ge 16 ]] || fail "Usa una contraseña de al menos 16 caracteres."
 [[ "$ADMIN_PASSWORD" == "$ADMIN_PASSWORD_CONFIRM" ]] || fail "Las contraseñas no coinciden."
-[[ "$ADMIN_PASSWORD" != *$'\n'* && "$ADMIN_PASSWORD" != *$'\r'* && "$ADMIN_PASSWORD" != *"'"* ]] || fail "La contraseña no puede contener comillas simples ni saltos de línea."
+[[ "$ADMIN_PASSWORD" != *$'\n'* && "$ADMIN_PASSWORD" != *$'\r'* && "$ADMIN_PASSWORD" != *"'"* ]] || fail "No se admiten comillas simples ni saltos de línea en la contraseña inicial."
 unset ADMIN_PASSWORD_CONFIRM
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y python3 python3-venv python3-pip ca-certificates
+apt-get install -y python3 python3-venv python3-pip ca-certificates openssl
 
 if ! getent group "$APP_GROUP" >/dev/null; then groupadd --system "$APP_GROUP"; fi
 if ! id "$APP_USER" >/dev/null 2>&1; then
   useradd --system --gid "$APP_GROUP" --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin "$APP_USER"
 fi
-install -d -o root -g root -m 0755 "$APP_DIR"
+install -d -o root -g root -m 0755 "$APP_DIR" "$APP_DIR/templates" "$APP_DIR/static" "$APP_DIR/deploy"
 install -d -o "$APP_USER" -g "$APP_GROUP" -m 0750 "$DATA_DIR"
 install -d -o root -g "$APP_GROUP" -m 0750 "$ETC_DIR"
-install -d -o root -g root -m 0755 "$APP_DIR/templates" "$APP_DIR/static" "$APP_DIR/deploy"
 install -o root -g root -m 0644 app.py admin_cli.py requirements.txt "$APP_DIR/"
 install -o root -g root -m 0644 templates/index.html "$APP_DIR/templates/"
 install -o root -g root -m 0644 static/styles.css static/app.js "$APP_DIR/static/"
+install -o root -g root -m 0644 deploy/configure-https-3128.sh "$APP_DIR/deploy/"
 
 python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --upgrade pip
@@ -71,7 +68,7 @@ After=network.target
 Wants=network.target
 
 [Service]
-Type=notify
+Type=simple
 User=${APP_USER}
 Group=${APP_GROUP}
 WorkingDirectory=${APP_DIR}
@@ -99,17 +96,17 @@ chmod 0644 "$SERVICE_FILE"
 systemctl daemon-reload
 systemctl enable --now "$APP_NAME"
 
-# Database now stores the initial password as a hash; discard bootstrap value.
+# First app start stores the bootstrap password as a hash; discard plaintext.
 sed -i '/^ADMIN_PASSWORD=/d' "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
 systemctl restart "$APP_NAME"
+systemctl is-active --quiet "$APP_NAME" || fail "El servicio no arrancó. Revisa journalctl -u $APP_NAME."
+curl -fsS --max-time 5 http://127.0.0.1:8000/api/session >/dev/null || fail "La verificación local del panel falló."
 
 printf '\nInstalación completada.\n'
-printf 'Servicio: systemctl status %s\n' "$APP_NAME"
-printf 'Logs:     journalctl -u %s -f\n' "$APP_NAME"
-printf 'Local:    http://127.0.0.1:8000\n'
-printf '\nHTTPS opcional en TCP/3128, sin usar los puertos 80 ni 8080:\n'
-printf '  sudo bash deploy/configure-https-3128.sh panel.tudominio.com\n'
-printf '\nCambiar credenciales del panel por SSH:\n'
+printf 'Servicio: sudo systemctl status %s\n' "$APP_NAME"
+printf 'Logs:     sudo journalctl -u %s -f\n' "$APP_NAME"
+printf 'TLS/3128: sudo bash %s/deploy/configure-https-3128.sh TU_DOMINIO\n' "$APP_DIR"
+printf 'Cambiar credenciales del panel por SSH:\n'
 printf '  sudo env DATABASE_PATH=%s %s/.venv/bin/python %s/admin_cli.py\n' "$DATA_DIR/bluecompany.db" "$APP_DIR" "$APP_DIR"
-printf '\nAviso: el MVP guarda registros administrativos; todavía no controla cuentas SSH ni servicios del host.\n'
+printf '\nLa web aún no administra cuentas Linux/SSH ni controla servicios del host.\n'

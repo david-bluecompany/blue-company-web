@@ -1,16 +1,16 @@
 # BLUE COMPANY Web Panel
 
-MVP con consola administrativa autenticada para gestionar registros de clientes (límites configurados, vencimientos y notas), inventario informativo de servicios y auditoría.
+MVP instalable para Ubuntu Server: consola administrativa web con registros de clientes, límites y vencimientos configurados, auditoría y autenticación independiente de Linux/SSH. El instalador puede dejar el servicio local y después habilitar HTTPS directo por TCP/3128 con certificado PEM existente o Certbot DNS-01 manual.
 
 ## Alcance actual
 
-Esta versión no administra cuentas Linux/SSH, no aprovisiona túneles, no inspecciona conexiones ni memoria de procesos y no inicia/detiene ni instala servicios. El estado de servicios es un catálogo de referencia; los límites son metadatos y no se aplican a sesiones reales.
+El panel no ejecuta el script Bash ni administra cuentas Linux/SSH, sesiones SSH reales, firewall o servicios del host. Los clientes y límites son registros de la base de datos de la aplicación; el inventario de servicios es informativo. No es todavía un reemplazo funcional de 3X-UI. Esto evita dar privilegios root al proceso web mientras se completa una integración con el host.
 
-Incluye login con hash de contraseña, cookies de sesión HTTP-only, protección CSRF para cambios, limitación básica de intentos de login, validación de datos, SQLite y auditoría. `admin_cli.py` permite cambiar el usuario/contraseña del **panel** desde una sesión SSH autorizada.
+Incluye login con hash de contraseña, cookie HTTP-only/SameSite, protección CSRF para cambios, limitación básica de intentos, validación de datos, SQLite y auditoría. `admin_cli.py` permite rotar las credenciales del panel desde una terminal SSH.
 
-## Instalar en una VPS Ubuntu (incluido Ubuntu 26.04)
+## Instalar en Ubuntu VPS
 
-Conéctate por SSH, instala Git y clona el proyecto:
+Clona el repositorio en la VPS:
 
 ```bash
 sudo apt update
@@ -20,43 +20,41 @@ cd blue-company-web
 sudo bash deploy/install-ubuntu.sh
 ```
 
-El instalador solicita el usuario y contraseña iniciales. La contraseña debe tener al menos 16 caracteres y se oculta al escribir. No hay credenciales predeterminadas. La aplicación corre como usuario de sistema sin privilegios, con Gunicorn/systemd, enlazada inicialmente a `127.0.0.1:8000`. No se cambian reglas de firewall.
+El instalador solicita el usuario y una contraseña inicial de 16+ caracteres; la entrada se oculta. No hay credenciales por defecto. Crea el usuario de sistema sin login `bluecompany`, instala Flask/Gunicorn en un virtualenv y configura `blue-company-web.service`. La app escucha solo en `127.0.0.1:8000`; no abre puertos ni cambia firewall. Verifica que el servicio quede activo al terminar.
 
-## HTTPS en TCP/3128 sin usar TCP/80 ni TCP/8080
+## HTTPS por 3128, sin usar 80 ni 8080
 
-Para HTTPS público de confianza necesitas un dominio DNS que apunte a la VPS. La emisión usa el desafío **DNS-01** de Let's Encrypt: no requiere servidor web ni listeners en 80/8080. Certbot te mostrará un registro TXT `_acme-challenge`; publícalo en el DNS del dominio y confirma cuando se haya propagado.
-
-Después de instalar el panel, desde el directorio clonado ejecuta:
+Requiere un dominio con DNS apuntando a la VPS. Ejecuta:
 
 ```bash
-sudo bash deploy/configure-https-3128.sh panel.tudominio.com
+sudo bash /opt/blue-company-web/deploy/configure-https-3128.sh panel.tudominio.com
 ```
 
-El script configura Gunicorn para TLS directo en TCP/3128, activa cookies seguras y no instala/configura Nginx ni modifica reglas de firewall. En Oracle Cloud permite **solo TCP/3128** en la regla de ingreso que elijas. No abras 8000 en público. El script no modifica ni utiliza puertos 80/8080. Asegúrate de que TCP/3128 esté libre antes de empezar.
+El asistente ofrece dos opciones: introducir rutas a un certificado/cadena y clave PEM ya existentes (por ejemplo, los archivos de Certbot), o emitir con Certbot manual DNS-01. Comprueba que el certificado corresponda al dominio y que clave/certificado sean pareja, instala copias con permisos restringidos y reinicia únicamente el servicio del panel.
 
-Visita `https://panel.tudominio.com:3128`.
+Abre **solo TCP/3128** en Oracle Cloud Security List/NSG y en UFW si lo usas. El configurador no crea reglas, no instala Nginx, no abre 80/8080 ni 8000. URL: `https://panel.tudominio.com:3128`.
 
-### Renovación del certificado
+Con DNS-01 manual la renovación es manual. Cuando renueves el certificado, vuelve a ejecutar el asistente con las nuevas rutas PEM. Para renovación automática hay que instalar un plugin DNS del proveedor y limitar cuidadosamente su token API; no se configura esa credencial aquí.
 
-El desafío DNS manual no se renueva de forma automática. Antes de que expire, vuelve a ejecutar el comando de configuración, completa el nuevo desafío TXT y el certificado se volverá a copiar al directorio protegido del panel. Para renovación automática se necesitaría integrar un plugin DNS compatible con el proveedor que aloja el dominio y custodiar una credencial API DNS de alcance mínimo; no se configura esa credencial automáticamente.
-
-## Cambiar usuario y contraseña del panel por SSH
-
-En la VPS:
+## Cambiar usuario/contraseña del panel por SSH
 
 ```bash
-sudo env DATABASE_PATH=/var/lib/blue-company/bluecompany.db /opt/blue-company-web/.venv/bin/python /opt/blue-company-web/admin_cli.py
+sudo env DATABASE_PATH=/var/lib/blue-company/bluecompany.db \
+  /opt/blue-company-web/.venv/bin/python /opt/blue-company-web/admin_cli.py
 ```
 
-El comando pide el administrador existente, el nuevo nombre y la contraseña dos veces usando entrada oculta. Guarda solo el hash, registra el cambio y no modifica las credenciales Linux/SSH ni las de clientes.
+Pide el administrador existente, el nuevo nombre y la contraseña dos veces de forma oculta. Persiste solamente el hash y registra auditoría. No toca credenciales de Linux, SSH ni de clientes.
 
-## Operación básica
+## Revisar y operar
 
 ```bash
 sudo systemctl status blue-company-web
-sudo journalctl -u blue-company-web -f
+sudo journalctl -u blue-company-web -n 100 --no-pager
 sudo systemctl restart blue-company-web
+sudo ss -ltnp | grep ':3128'
 ```
+
+El puerto 8000 es local; no lo abras en Oracle Cloud. El acceso web público es exclusivamente por 3128 una vez configurado TLS.
 
 ## Desarrollo local
 
@@ -67,15 +65,15 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt gunicorn
 export SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
-export ADMIN_USERNAME="admin"
-export ADMIN_PASSWORD="pon-una-clave-larga-y-unica"
+export ADMIN_USERNAME=admin
+export ADMIN_PASSWORD='una-clave-larga-de-desarrollo'
 flask --app app run --host 127.0.0.1 --port 8000
 ```
 
-La cuenta administrativa se crea al iniciar por primera vez si se proporcionan las variables de entorno. Conserva la misma `SECRET_KEY` entre reinicios. La base está en `bluecompany.db`; `DATABASE_PATH` la puede cambiar.
+No publiques el servidor de desarrollo Flask. Protege la base SQLite, secretos y respaldos.
 
-## Producción y limitaciones
+## Próximas fases
 
-El instalador HTTPS no configura Oracle Cloud networking automáticamente. Revisa y limita la regla de ingreso a TCP/3128. Protege la base SQLite y secretos, mantén Ubuntu actualizado y respalda la base.
-
-Este MVP **no es aún un reemplazo de 3X-UI ni ejecuta las funciones privilegiadas del script original**. Una integración posterior con el sistema operativo debe diseñarse aparte: sin shell accesible desde la API, con agente aislado, permisos mínimos, acciones permitidas explícitamente, auditoría y revisión de seguridad.
+1. Añadir pruebas automatizadas y validar instalación/HTTPS en Ubuntu limpio.
+2. Completar la sección visual de TLS/estado con instrucciones claras de administración.
+3. Diseñar por separado un agente local de permisos mínimos para integrar las funciones del script original, con allowlist, auditoría y revisión; nunca ejecutar comandos arbitrarios recibidos de la web.
