@@ -21,6 +21,7 @@
       <small class="login-hint">Configura ADMIN_USERNAME y ADMIN_PASSWORD en el entorno antes del primer inicio. No hay credenciales predeterminadas.</small>
     </section>
   </main>
+
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <a class="brand-row" href="#dashboard"><span class="brand-mark">BC</span><span><strong>BLUE COMPANY</strong><small>ADMIN CONSOLE</small></span></a>
@@ -31,30 +32,135 @@
         <a href="#limits" class="nav-link" data-page="limits">◷ <span>Límites</span></a>
         <a href="#expiry" class="nav-link" data-page="expiry">▣ <span>Vencimientos</span></a>
         <a href="#services" class="nav-link" data-page="services">◈ <span>Servicios</span></a>
+        <a href="#tls" class="nav-link" data-page="tls">🔐 <span>Certificados</span></a>
         <a href="#security" class="nav-link" data-page="security">⬡ <span>Auditoría</span></a>
       </nav>
-      <div class="sidebar-bottom"><span class="avatar">BC</span><span><strong id="current-user">admin</strong><small>Administrador</small></span><button id="logout-btn" class="logout-btn">Salir</button></div>
+      <div class="sidebar-bottom">
+        <span class="avatar">BC</span>
+        <span><strong id="current-user">admin</strong><small>Administrador</small></span>
+        <button id="logout-btn" class="logout-btn">Salir</button>
+      </div>
     </aside>
+
     <main class="content">
-      <header class="topbar"><div><small class="eyebrow">BLUE COMPANY / CONSOLA</small><h1 id="page-title">Resumen</h1></div><span class="environment"><i></i> METADATOS · SIN ACCESO AL HOST</span></header>
-      <div class="warning-banner"><strong>Modo seguro:</strong> este panel gestiona registros de clientes únicamente. No crea cuentas Linux, no inspecciona conexiones y no inicia ni detiene servicios.</div>
+      <header class="topbar">
+        <div><small class="eyebrow">BLUE COMPANY / CONSOLA</small><h1 id="page-title">Resumen</h1></div>
+        <span class="environment">METADATOS · SIN ACCESO AL HOST</span>
+      </header>
+
+      <div class="warning-banner"><strong>Modo seguro:</strong> este panel gestiona registros y configuración TLS. No crea cuentas Linux ni inspecciona conexiones sin una integración segura.</div>
+
       <section id="dashboard" class="page active">
         <div class="stats-grid">
           <article class="stat-card"><span>Registros de usuarios</span><strong id="stat-users">0</strong><small id="stat-users-sub">—</small></article>
           <article class="stat-card"><span>Servicios catalogados</span><strong id="stat-services">0</strong><small>Inventario informativo</small></article>
           <article class="stat-card"><span>Vencimientos próximos</span><strong id="stat-expiry">0</strong><small>Próximos 5 registros</small></article>
+          <article class="stat-card"><span>HTTPS activo</span><strong id="tls-ready">—</strong><small id="tls-domain-label">Sin dominio</small></article>
         </div>
-        <div class="panel-card"><div class="panel-head"><div><h2>Inventario de servicios</h2><p>No conectado al servidor</p></div></div><div id="services-preview" class="stack-list"></div></div>
-        <div class="panel-card"><div class="panel-head"><div><h2>Actividad administrativa</h2><p>Auditoría local del panel</p></div></div><div class="table-wrap"><table><thead><tr><th>FECHA UTC</th><th>ADMIN</th><th>ACCIÓN</th><th>OBJETIVO</th><th>DETALLE</th></tr></thead><tbody id="audit-table"></tbody></table></div></div>
+
+        <div class="panel-card">
+          <div class="panel-head"><div><h2>Inventario de servicios</h2><p>No conectado al servidor</p></div></div>
+          <div id="services-preview" class="stack-list"></div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-head"><div><h2>Actividad administrativa</h2><p>Auditoría local del panel</p></div></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>FECHA UTC</th><th>ACTOR</th><th>ACCIÓN</th><th>DESTINO</th></tr></thead>
+              <tbody id="audit-table"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
-      <section id="users" class="page"><div class="toolbar"><input id="user-search" type="search" placeholder="Buscar usuario…"><button class="primary-btn" id="new-user-btn">＋ Agregar registro</button></div><div class="panel-card"><div class="table-wrap"><table><thead><tr><th>USUARIO</th><th>LÍMITE REGISTRADO</th><th>VENCIMIENTO</th><th>ESTADO</th><th>NOTAS</th><th>ACCIONES</th></tr></thead><tbody id="user-table"></tbody></table></div></div></section>
-      <section id="limits" class="page"><div class="panel-card"><div class="panel-head"><div><h2>Límites configurados</h2><p>Son metadatos; no se aplican al servidor.</p></div></div><div id="limit-cards" class="cards-grid"></div></div></section>
-      <section id="expiry" class="page"><div class="panel-card"><div class="panel-head"><div><h2>Vencimientos</h2><p>Fechas guardadas en los registros del panel.</p></div></div><div class="table-wrap"><table><thead><tr><th>USUARIO</th><th>FECHA</th><th>ESTADO</th><th>NOTAS</th></tr></thead><tbody id="expiry-table"></tbody></table></div></div></section>
-      <section id="services" class="page"><div class="panel-card"><div class="panel-head"><div><h2>Servicios</h2><p>Catálogo de referencia; estado del host no comprobado.</p></div></div><div id="services-table" class="stack-list"></div></div></section>
-      <section id="security" class="page"><div class="panel-card"><div class="panel-head"><div><h2>Auditoría</h2><p>Últimos 100 eventos administrativos.</p></div></div><div id="logs-list" class="stack-list"></div></div></section>
+
+      <section id="users" class="page">
+        <div class="toolbar">
+          <input id="user-search" type="search" placeholder="Buscar usuario…">
+          <button class="primary-btn" id="new-user-btn">＋ Agregar registro</button>
+        </div>
+        <div class="panel-card">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>USUARIO</th><th>LÍMITE</th><th>VENCIMIENTO</th><th>ESTADO</th><th>ACCIONES</th></tr></thead>
+              <tbody id="user-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="limits" class="page">
+        <div class="panel-card">
+          <div class="panel-head"><div><h2>Límites configurados</h2><p>Son metadatos; no se aplican al servidor.</p></div></div>
+          <div id="limit-cards" class="cards-grid"></div>
+        </div>
+      </section>
+
+      <section id="expiry" class="page">
+        <div class="panel-card">
+          <div class="panel-head"><div><h2>Vencimientos</h2><p>Fechas guardadas en los registros del panel.</p></div></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>USUARIO</th><th>FECHA</th><th>ESTADO</th></tr></thead>
+              <tbody id="expiry-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="services" class="page">
+        <div class="panel-card">
+          <div class="panel-head"><div><h2>Servicios</h2><p>Catálogo de referencia; estado del host no comprobado.</p></div></div>
+          <div id="services-table" class="stack-list"></div>
+        </div>
+      </section>
+
+      <section id="tls" class="page">
+        <div class="panel-card">
+          <div class="panel-head"><div><h2>HTTPS / TLS</h2><p>Certificado público y clave privada para activar la web en puerto 3129.</p></div></div>
+          <form id="tls-form" class="tls-form">
+            <label><span>Dominio</span><input type="text" id="tls-domain" name="domain" placeholder="panel.tudominio.com" required></label>
+            <label><span>Certificado público (fullchain.pem)</span><input type="text" id="tls-cert" name="cert_path" placeholder="/etc/letsencrypt/live/tu-dominio/fullchain.pem" required></label>
+            <label><span>Clave privada (privkey.pem)</span><input type="text" id="tls-key" name="key_path" placeholder="/etc/letsencrypt/live/tu-dominio/privkey.pem" required></label>
+            <label><span>Puerto HTTPS</span><input type="number" id="tls-port" name="port" value="3129" min="3128" max="443"></label>
+            <div class="tls-actions">
+              <button type="submit" class="primary-btn">Guardar certificado</button>
+              <button type="button" id="tls-apply" class="secondary-btn">Aplicar TLS</button>
+            </div>
+          </form>
+          <p id="tls-status" class="tls-status">Sin configuración aún.</p>
+        </div>
+      </section>
+
+      <section id="security" class="page">
+        <div class="panel-card">
+          <div class="panel-head"><div><h2>Auditoría</h2><p>Últimos 100 eventos administrativos.</p></div></div>
+          <div id="logs-list" class="stack-list"></div>
+        </div>
+      </section>
     </main>
   </div>
-  <dialog id="user-dialog" class="user-dialog"><form id="user-form"><div class="panel-head"><div><h2 id="dialog-title">Agregar registro</h2><p>Solo metadatos del panel, sin contraseña de acceso.</p></div><button type="button" class="icon-btn" id="close-dialog" aria-label="Cerrar">×</button></div><input type="hidden" name="id"><label>Nombre de usuario<input name="username" required maxlength="32" pattern="[A-Za-z0-9_-]{1,32}"></label><label>Límite registrado<input name="max_sessions" type="number" min="1" max="100" value="1" required></label><label>Vencimiento<input name="expires_on" type="date" required></label><label>Estado<select name="status"><option value="active">Activo</option><option value="suspended">Suspendido</option></select></label><label>Notas<textarea name="notes" maxlength="500" rows="3"></textarea></label><p id="form-error" class="error-text"></p><div class="dialog-actions"><button type="button" class="secondary-btn" id="cancel-dialog">Cancelar</button><button type="submit" class="primary-btn">Guardar registro</button></div></form></dialog>
+
+  <dialog id="user-dialog" class="user-dialog">
+    <form id="user-form">
+      <div class="panel-head">
+        <div><h2 id="dialog-title">Agregar registro</h2><p>Solo metadatos del panel, sin contraseña de acceso.</p></div>
+        <button type="button" class="close-btn" id="close-dialog">×</button>
+      </div>
+      <input type="hidden" name="id">
+      <label><span>Nombre de usuario</span><input type="text" name="username" maxlength="32" required></label>
+      <label><span>Límite de sesiones</span><input type="number" name="max_sessions" min="1" max="100" required></label>
+      <label><span>Vencimiento</span><input type="date" name="expires_on" required></label>
+      <label><span>Estado</span><select name="status"><option value="active">active</option><option value="suspended">suspended</option></select></label>
+      <label><span>Notas</span><textarea name="notes" rows="3"></textarea></label>
+      <p id="form-error" class="error-text"></p>
+      <div class="dialog-actions">
+        <button type="button" class="secondary-btn" id="cancel-dialog">Cancelar</button>
+        <button type="submit" class="primary-btn">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
