@@ -1,0 +1,29 @@
+[Unit]
+Description=BLUE COMPANY Web Panel
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+User=bluecompany
+Group=bluecompany
+WorkingDirectory=/opt/blue-company-web
+EnvironmentFile=/etc/blue-company/panel.env
+ExecStart=/opt/blue-company-web/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 --access-logfile - --error-logfile - app:app
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/blue-company
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
