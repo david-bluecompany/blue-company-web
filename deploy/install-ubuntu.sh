@@ -12,7 +12,7 @@ SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 [[ "${EUID}" -eq 0 ]] || fail "Ejecuta con sudo: sudo bash deploy/install-ubuntu.sh"
-[[ -f app.py && -f admin_cli.py && -f requirements.txt && -d templates && -d static && -f deploy/configure-https-3128.sh ]] || fail "Ejecuta desde la raíz del repositorio blue-company-web."
+[[ -f app.py && -f admin_cli.py && -f requirements.txt && -d templates && -d static && -f deploy/configure-https-3129.sh ]] || fail "Ejecuta desde la raíz del repositorio blue-company-web."
 [[ -f /etc/os-release ]] || fail "No se reconoce la distribución."
 . /etc/os-release
 [[ "${ID:-}" == ubuntu ]] || fail "Este instalador requiere Ubuntu."
@@ -30,7 +30,7 @@ unset ADMIN_PASSWORD_CONFIRM
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y python3 python3-venv python3-pip ca-certificates openssl
+apt-get install -y python3 python3-venv python3-pip ca-certificates openssl sudo
 
 if ! getent group "$APP_GROUP" >/dev/null; then groupadd --system "$APP_GROUP"; fi
 if ! id "$APP_USER" >/dev/null 2>&1; then
@@ -42,7 +42,7 @@ install -d -o root -g "$APP_GROUP" -m 0750 "$ETC_DIR"
 install -o root -g root -m 0644 app.py admin_cli.py requirements.txt "$APP_DIR/"
 install -o root -g root -m 0644 templates/index.html "$APP_DIR/templates/"
 install -o root -g root -m 0644 static/styles.css static/app.js "$APP_DIR/static/"
-install -o root -g root -m 0644 deploy/configure-https-3128.sh "$APP_DIR/deploy/"
+install -o root -g root -m 0755 deploy/configure-https-3129.sh "$APP_DIR/deploy/"
 
 python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --upgrade pip
@@ -93,10 +93,16 @@ UMask=0027
 WantedBy=multi-user.target
 EOF
 chmod 0644 "$SERVICE_FILE"
+
+cat > /etc/sudoers.d/bluecompany-web <<EOF
+bluecompany ALL=(root) NOPASSWD: /opt/blue-company-web/deploy/configure-https-3129.sh
+Defaults:bluecompany !requiretty
+EOF
+chmod 0440 /etc/sudoers.d/bluecompany-web
+visudo -cf /etc/sudoers.d/bluecompany-web >/dev/null || fail "La regla sudoers no es válida."
+
 systemctl daemon-reload
 systemctl enable --now "$APP_NAME"
-
-# First app start stores the bootstrap password as a hash; discard plaintext.
 sed -i '/^ADMIN_PASSWORD=/d' "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
 systemctl restart "$APP_NAME"
@@ -106,7 +112,6 @@ curl -fsS --max-time 5 http://127.0.0.1:8000/api/session >/dev/null || fail "La 
 printf '\nInstalación completada.\n'
 printf 'Servicio: sudo systemctl status %s\n' "$APP_NAME"
 printf 'Logs:     sudo journalctl -u %s -f\n' "$APP_NAME"
-printf 'TLS/3128: sudo bash %s/deploy/configure-https-3128.sh TU_DOMINIO\n' "$APP_DIR"
+printf 'TLS/3129: sudo bash %s/deploy/configure-https-3129.sh TU_DOMINIO --cert RUTA/fullchain.pem --key RUTA/privkey.pem\n' "$APP_DIR"
 printf 'Cambiar credenciales del panel por SSH:\n'
 printf '  sudo env DATABASE_PATH=%s %s/.venv/bin/python %s/admin_cli.py\n' "$DATA_DIR/bluecompany.db" "$APP_DIR" "$APP_DIR"
-printf '\nLa web aún no administra cuentas Linux/SSH ni controla servicios del host.\n'
