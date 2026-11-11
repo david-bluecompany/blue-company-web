@@ -14,13 +14,13 @@ SERVICE_FILE="/etc/systemd/system/blue-company-web.service"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 [[ "${EUID}" -eq 0 ]] || fail "Ejecuta con sudo: sudo bash deploy/install-ubuntu.sh"
-[[ -f "app.py" && -f "requirements.txt" && -d "templates" && -d "static" ]] || fail "Ejecuta este script desde la raíz del repositorio blue-company-web."
+[[ -f "app.py" && -f "admin_cli.py" && -f "requirements.txt" && -d "templates" && -d "static" ]] || fail "Ejecuta este script desde la raíz del repositorio blue-company-web."
 [[ -f /etc/os-release ]] || fail "No se reconoce la distribución."
 . /etc/os-release
 [[ "${ID:-}" == "ubuntu" ]] || fail "Este instalador está preparado para Ubuntu (incluido Ubuntu 26.04)."
 
 printf '\nBLUE COMPANY · instalación local segura en Ubuntu\n'
-printf 'La app escuchará solo en 127.0.0.1:8000; no cambia el firewall ni configura un dominio.\n\n'
+printf 'La app escuchará en 127.0.0.1:8000; no cambia el firewall ni configura un dominio.\n\n'
 
 read -r -p "Usuario administrador del panel: " ADMIN_USERNAME
 [[ "$ADMIN_USERNAME" =~ ^[a-zA-Z0-9_-]{1,32}$ ]] || fail "Usuario inválido (usa letras, números, guion o guion bajo; máximo 32)."
@@ -43,7 +43,7 @@ install -d -o root -g root -m 0755 "$APP_DIR"
 install -d -o "$APP_USER" -g "$APP_GROUP" -m 0750 "$DATA_DIR"
 install -d -o root -g "$APP_GROUP" -m 0750 "$ETC_DIR"
 install -d -o root -g root -m 0755 "$APP_DIR/templates" "$APP_DIR/static" "$APP_DIR/deploy"
-install -o root -g root -m 0644 app.py requirements.txt "$APP_DIR/"
+install -o root -g root -m 0644 app.py admin_cli.py requirements.txt "$APP_DIR/"
 install -o root -g root -m 0644 templates/index.html "$APP_DIR/templates/"
 install -o root -g root -m 0644 static/styles.css static/app.js "$APP_DIR/static/"
 
@@ -52,8 +52,6 @@ python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" gunicorn
 
 PANEL_SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
-# Password is entered interactively and quoted for systemd EnvironmentFile.
-# Single quotes are excluded above, so no shell/systemd expansion is possible.
 cat > "$ENV_FILE" <<EOF
 SECRET_KEY=${PANEL_SECRET}
 DATABASE_PATH=${DATA_DIR}/bluecompany.db
@@ -101,8 +99,7 @@ chmod 0644 "$SERVICE_FILE"
 systemctl daemon-reload
 systemctl enable --now "$APP_NAME"
 
-# The database has now stored the initial password as a Werkzeug hash. Remove
-# the bootstrap secret from the environment file; future restarts do not need it.
+# Database now stores the initial password as a hash; discard bootstrap value.
 sed -i '/^ADMIN_PASSWORD=/d' "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
 systemctl restart "$APP_NAME"
@@ -111,9 +108,8 @@ printf '\nInstalación completada.\n'
 printf 'Servicio: systemctl status %s\n' "$APP_NAME"
 printf 'Logs:     journalctl -u %s -f\n' "$APP_NAME"
 printf 'Local:    http://127.0.0.1:8000\n'
-printf '\nAcceso desde tu computadora mediante túnel SSH:\n'
-printf '  ssh -L 8000:127.0.0.1:8000 USUARIO_SSH@IP_DE_TU_VPS\n'
-printf 'Después abre http://127.0.0.1:8000 en tu navegador.\n'
+printf '\nHTTPS opcional en TCP/3128, sin usar los puertos 80 ni 8080:\n'
+printf '  sudo bash deploy/configure-https-3128.sh panel.tudominio.com\n'
 printf '\nCambiar credenciales del panel por SSH:\n'
-printf '  cd %s && sudo env DATABASE_PATH=%s %s/.venv/bin/python admin_cli.py\n' "$APP_DIR" "$DATA_DIR/bluecompany.db" "$APP_DIR"
+printf '  sudo env DATABASE_PATH=%s %s/.venv/bin/python %s/admin_cli.py\n' "$DATA_DIR/bluecompany.db" "$APP_DIR" "$APP_DIR"
 printf '\nAviso: el MVP guarda registros administrativos; todavía no controla cuentas SSH ni servicios del host.\n'
