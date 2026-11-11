@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import os
 import re
 import secrets
 import sqlite3
+import subprocess
 import time
 from datetime import date, datetime, timezone
 from functools import wraps
@@ -15,6 +17,7 @@ from flask import Flask, g, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
+DOMAIN_RE = re.compile(r"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
 ALLOWED_STATES = {"active", "suspended"}
 SERVICES = [
     {"name": "OpenSSH", "ports": "22", "management": "read-only / not connected"},
@@ -69,6 +72,15 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS tls_settings (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                domain TEXT NOT NULL DEFAULT '',
+                cert_path TEXT NOT NULL DEFAULT '',
+                key_path TEXT NOT NULL DEFAULT '',
+                port INTEGER NOT NULL DEFAULT 3129,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 occurred_at TEXT NOT NULL,
@@ -88,6 +100,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                     "INSERT INTO admins (username, password_hash, created_at) VALUES (?, ?, ?)",
                     (admin_name, generate_password_hash(admin_password), utc_now()),
                 )
+        conn.execute(
+            "INSERT OR IGNORE INTO tls_settings (id, domain, cert_path, key_path, port, enabled, updated_at) VALUES (1, '', '', '', 3129, 0, ?)",
+            (utc_now(),),
+        )
         conn.commit()
         conn.close()
 
@@ -160,6 +176,67 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             cleaned["notes"] = notes.strip()
         return cleaned, None
 
+    def validate_tls_pair(domain: str, cert_path: str, key_path: str) -> tuple[bool, str | None]:
+        if not DOMAIN_RE.fullmatch(domain):
+            return False, "El dominio es inválido."
+        for label, value in (("certificado", cert_path), ("clave", key_path)):
+            if not value or not Path(value).is_file() or not os.access(value, os.R_OK):
+                return False, f"No se puede leer la ruta del {label}."
+        try:
+            check = subprocess.run(
+                ["openssl", "x509", "-in", cert_path, "-noout", "-checkhost", domain],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if check.returncode != 0:
+                return False, "El certificado no es válido para ese dominio."
+            cert_pub = subprocess.run(
+                ["openssl", "x509", "-in", cert_path, "-pubkey", "-noout"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            key_pub = subprocess.run(
+                ["openssl", "pkey", "-in", key_path, "-pubout"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if cert_pub.returncode != 0 or key_pub.returncode != 0:
+                return False, "No se pudo validar la pareja de claves."
+            cert_hash = subprocess.run(
+                ["openssl", "pkey", "-pubin", "-in", "/dev/stdin", "-outform", "DER"],
+                input=cert_pub.stdout,
+                capture_output=True,
+                text=False,
+                check=False,
+            )
+            key_hash = subprocess.run(
+                ["openssl", "pkey", "-pubin", "-in", "/dev/stdin", "-outform", "DER"],
+                input=key_pub.stdout,
+                capture_output=True,
+                text=False,
+                check=False,
+            )
+            if cert_hash.returncode != 0 or key_hash.returncode != 0:
+                return False, "La clave y el certificado no coinciden."
+            if cert_hash.stdout != key_hash.stdout:
+                return False, "El certificado y la clave privada no forman un par válido."
+        except FileNotFoundError:
+            return False, "El binario OpenSSL no está disponible en este sistema."
+        return True, None
+
+    def get_tls_settings() -> dict[str, Any]:
+        conn = connect_db()
+        row = conn.execute(
+            "SELECT domain, cert_path, key_path, port, enabled, updated_at FROM tls_settings WHERE id = 1"
+        ).fetchone()
+        conn.close()
+        if not row:
+            return {"domain": "", "cert_path": "", "key_path": "", "port": 3129, "enabled": False, "updated_at": utc_now()}
+        return dict(row)
+
     init_db()
 
     @app.after_request
@@ -230,6 +307,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         recent = conn.execute(
             "SELECT occurred_at, actor, action, target, detail FROM audit_log ORDER BY id DESC LIMIT 8"
         ).fetchall()
+        tls = conn.execute("SELECT domain, port, enabled FROM tls_settings WHERE id = 1").fetchone()
         conn.close()
         return jsonify({
             "mode": "metadata-only",
@@ -237,6 +315,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "services": SERVICES,
             "upcoming_expirations": [dict(row) for row in upcoming],
             "recent_activity": [dict(row) for row in recent],
+            "tls": {"domain": tls["domain"] if tls else "", "port": (tls["port"] if tls else 3129), "enabled": bool((tls["enabled"] if tls else 0))},
             "notice": "Sin conexión al sistema operativo; no se consultan métricas ni sesiones reales.",
         })
 
@@ -315,6 +394,67 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         rows = conn.execute("SELECT occurred_at, actor, action, target, detail FROM audit_log ORDER BY id DESC LIMIT 100").fetchall()
         conn.close()
         return jsonify([dict(row) for row in rows])
+
+    @app.route("/api/tls", methods=["GET", "POST"])
+    @require_admin
+    def api_tls():
+        if request.method == "GET":
+            return jsonify(get_tls_settings())
+        payload = read_payload()
+        if payload is None:
+            return json_error("Envía un objeto JSON.")
+        domain = str(payload.get("domain", "")).strip()
+        cert_path = str(payload.get("cert_path", "")).strip()
+        key_path = str(payload.get("key_path", "")).strip()
+        port = int(payload.get("port", 3129) or 3129)
+        if not DOMAIN_RE.fullmatch(domain):
+            return json_error("El dominio del certificado es inválido.")
+        if port not in (3128, 3129, 443):
+            return json_error("El puerto TLS debe ser 3128, 3129 o 443.")
+        ok, reason = validate_tls_pair(domain, cert_path, key_path)
+        if not ok:
+            return json_error(reason or "La pareja de certificados no es válida.")
+        now = utc_now()
+        conn = connect_db()
+        conn.execute(
+            "INSERT INTO tls_settings (id, domain, cert_path, key_path, port, enabled, updated_at) VALUES (1, ?, ?, ?, ?, 0, ?) ON CONFLICT(id) DO UPDATE SET domain = excluded.domain, cert_path = excluded.cert_path, key_path = excluded.key_path, port = excluded.port, updated_at = excluded.updated_at",
+            (domain, cert_path, key_path, port, now),
+        )
+        conn.commit()
+        conn.close()
+        audit("tls.saved", domain, f"Ruta del certificado validada para puerto {port}")
+        return jsonify({"ok": True, "domain": domain, "cert_path": cert_path, "key_path": key_path, "port": port, "enabled": False})
+
+    @app.route("/api/tls/apply", methods=["POST"])
+    @require_admin
+    def api_tls_apply():
+        payload = read_payload()
+        if payload is None:
+            return json_error("Envía un objeto JSON.")
+        domain = str(payload.get("domain", "")).strip()
+        cert_path = str(payload.get("cert_path", "")).strip()
+        key_path = str(payload.get("key_path", "")).strip()
+        port = int(payload.get("port", 3129) or 3129)
+        ok, reason = validate_tls_pair(domain, cert_path, key_path)
+        if not ok:
+            return json_error(reason or "La pareja de certificados no es válida.")
+        cmd = ["sudo", "/opt/blue-company-web/deploy/configure-https-3129.sh", domain, "--cert", cert_path, "--key", key_path, "--port", str(port)]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            return json_error("No está disponible el comando sudo para aplicar TLS.")
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "Error no especificado.").strip()
+            return json_error(f"La configuración TLS falló: {err}")
+        conn = connect_db()
+        conn.execute(
+            "INSERT INTO tls_settings (id, domain, cert_path, key_path, port, enabled, updated_at) VALUES (1, ?, ?, ?, ?, 1, ?) ON CONFLICT(id) DO UPDATE SET domain = excluded.domain, cert_path = excluded.cert_path, key_path = excluded.key_path, port = excluded.port, enabled = 1, updated_at = excluded.updated_at",
+            (domain, cert_path, key_path, port, utc_now()),
+        )
+        conn.commit()
+        conn.close()
+        audit("tls.apply", domain, f"TLS activado en puerto {port}")
+        return jsonify({"ok": True, "domain": domain, "port": port, "enabled": True, "output": (proc.stdout or "").strip()})
 
     @app.errorhandler(413)
     def request_too_large(_error):
