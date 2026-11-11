@@ -1,242 +1,111 @@
-const state = {
-  user: null,
-  view: 'dashboard'
-};
+const state = { user: null, csrf: null, users: [], services: [], logs: [] };
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
-
-function formatDate(dateText) {
-  if (!dateText) return '—';
-  const d = new Date(dateText);
-  return Number.isNaN(d.getTime()) ? dateText : d.toLocaleString('es-ES', { dateStyle: 'medium' });
+async function api(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (options.body) headers.set('Content-Type', 'application/json');
+  if (options.method && options.method !== 'GET' && state.csrf) headers.set('X-CSRF-Token', state.csrf);
+  const response = await fetch(url, { ...options, headers, credentials: 'same-origin' });
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && url !== '/api/login') { showLogin(); throw new Error('Tu sesión terminó. Vuelve a iniciar sesión.'); }
+  if (!response.ok) throw new Error(data.error || `Error HTTP ${response.status}`);
+  return data;
 }
-
+function showToast(message) {
+  const toast = $('#toast'); toast.textContent = message; toast.classList.add('show');
+  clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.classList.remove('show'), 2800);
+}
+function showLogin() { $('#app-shell').classList.add('hidden'); $('#login-screen').classList.remove('hidden'); }
+function showApp() { $('#login-screen').classList.add('hidden'); $('#app-shell').classList.remove('hidden'); }
+function setPage(name) {
+  const page = document.getElementById(name) ? name : 'dashboard';
+  $$('.page').forEach(section => section.classList.toggle('active', section.id === page));
+  $$('.nav-link').forEach(link => link.classList.toggle('active', link.dataset.page === page));
+  $('#page-title').textContent = ({dashboard:'Resumen',users:'Usuarios',limits:'Límites',expiry:'Vencimientos',services:'Servicios',security:'Auditoría'})[page];
+}
 async function checkSession() {
-  const res = await fetch('/api/session');
-  const data = await res.json();
-  state.user = data.user || null;
-  const loginScreen = $('#login-screen');
-  const appShell = $('#app-shell');
-  if (data.logged_in) {
-    loginScreen.classList.add('hidden');
-    appShell.classList.remove('hidden');
-    $('#current-user').textContent = data.user;
-    loadDashboard();
-  } else {
-    appShell.classList.add('hidden');
-    loginScreen.classList.remove('hidden');
-  }
-}
-
-async function loadDashboard() {
   try {
-    const [dashboardRes, usersRes, servicesRes, logsRes] = await Promise.all([
-      fetch('/api/dashboard'),
-      fetch('/api/users'),
-      fetch('/api/services'),
-      fetch('/api/logs')
-    ]);
-
-    const dashboard = await dashboardRes.json();
-    const users = await usersRes.json();
-    const services = await servicesRes.json();
-    const logs = await logsRes.json();
-
-    $('#stat-users').textContent = dashboard.totals.users;
-    $('#stat-users-sub').textContent = `${dashboard.totals.active_users} activos`;
-    $('#stat-sessions').textContent = dashboard.totals.sessions;
-    $('#stat-sessions-sub').textContent = `/${dashboard.totals.limit}`;
-    $('#stat-services').textContent = dashboard.totals.services_active;
-    $('#stat-services-sub').textContent = `/ ${dashboard.totals.services_total}`;
-    $('#stat-memory').textContent = `${dashboard.totals.memory_used}%`;
-    $('#stat-memory-sub').textContent = 'uso';
-    $('#server-name').textContent = dashboard.server.name;
-    $('#server-meta').textContent = `${dashboard.server.os} · Linux · 4 núcleos`;
-    $('#server-ip').textContent = dashboard.server.ip;
-    $('#cpu-value').textContent = `${dashboard.totals.server_load}%`;
-    $('#ram-value').textContent = `${dashboard.totals.memory_used}%`;
-    $('#disk-value').textContent = `${dashboard.totals.disk_used}%`;
-    $('#cpu-bar').style.width = `${dashboard.totals.server_load}%`;
-    $('#ram-bar').style.width = `${dashboard.totals.memory_used}%`;
-    $('#disk-bar').style.width = `${dashboard.totals.disk_used}%`;
-
-    const preview = services.slice(0, 5).map(s => `
-      <div class="list-item">
-        <div>
-          <strong>${s.name}</strong>
-          <div class="tiny">${s.port}</div>
-        </div>
-        <span class="badge ${s.status === 'active' ? 'active' : 'inactive'}">${s.status === 'active' ? 'Activo' : 'Inactivo'}</span>
-      </div>
-    `).join('');
-    $('#services-preview').innerHTML = preview;
-
-    const audits = logs.slice(0, 5).map(log => `
-      <tr>
-        <td>${formatDate(log.timestamp)}</td>
-        <td>${log.action}</td>
-        <td>${log.details}</td>
-      </tr>
-    `).join('');
-    $('#audit-table').innerHTML = audits;
-
-    renderUsers(users);
-    renderLimits(users);
-    renderServices(services);
-    renderLogs(logs);
-    bindNav();
-  } catch (err) {
-    console.error(err);
-  }
+    const data = await api('/api/session'); state.user = data.user; state.csrf = data.csrf_token;
+    if (!data.logged_in) return showLogin();
+    $('#current-user').textContent = state.user; showApp(); await loadAll();
+  } catch (error) { showLogin(); }
 }
-
-function renderUsers(users) {
-  const q = $('#user-search')?.value || '';
-  const visible = users.filter(u => u.username.toLowerCase().includes(q.toLowerCase()));
-  $('#user-table').innerHTML = visible.map(u => `
-    <tr>
-      <td>${u.username}</td>
-      <td>${u.limit_connections}</td>
-      <td>${u.expiration || '—'}</td>
-      <td><span class="badge ${u.state === 'active' ? 'active' : 'inactive'}">${u.state === 'active' ? 'Activo' : 'Suspendido'}</span></td>
-      <td>
-        <button class="primary-btn" data-id="${u.id}" data-state="${u.state === 'active' ? 'suspended' : 'active'}">${u.state === 'active' ? 'Suspender' : 'Reactivar'}</button>
-      </td>
-    </tr>
-  `).join('');
-
-  $('#user-table .primary-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const id = button.dataset.id;
-      const stateValue = button.dataset.state;
-      await fetch(`/api/users/${id}/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: stateValue })
-      });
-      loadDashboard();
-    });
-  });
+async function loadAll() {
+  const [dashboard, users, services, logs] = await Promise.all([
+    api('/api/dashboard'), api('/api/users'), api('/api/services'), api('/api/logs')
+  ]);
+  state.users = users; state.services = services; state.logs = logs;
+  $('#stat-users').textContent = dashboard.users.total;
+  $('#stat-users-sub').textContent = `${dashboard.users.active} activos · registros solamente`;
+  $('#stat-services').textContent = dashboard.services.length;
+  $('#stat-expiry').textContent = dashboard.upcoming_expirations.length;
+  renderServices(); renderUsers(); renderLimits(); renderExpiry(); renderLogs();
 }
-
-function renderLimits(users) {
-  const html = users.map(u => `
-    <div class="limit-card">
-      <h4>${u.username}</h4>
-      <div class="tiny">Sesiones: ${u.limit_connections}</div>
-      <div class="progress" style="margin-top:12px"><div style="width:${Math.min(100, 50)}%"></div></div>
-    </div>
-  `).join('');
-  $('#limit-cards').innerHTML = html;
+function renderServices() {
+  const markup = state.services.map(service => `<div class="list-item"><span><strong>${esc(service.name)}</strong><small>Puertos: ${esc(service.ports)}</small></span><span class="read-only">Solo referencia</span></div>`).join('');
+  $('#services-preview').innerHTML = markup; $('#services-table').innerHTML = markup;
 }
-
-function renderServices(services) {
-  const html = services.map(s => `
-    <div class="list-item">
-      <div>
-        <strong>${s.name}</strong>
-        <div class="tiny">${s.port} · ${s.description}</div>
-      </div>
-      <button class="primary-btn" data-service-id="${s.id}" data-status="${s.status === 'active' ? 'inactive' : 'active'}">${s.status === 'active' ? 'Desactivar' : 'Activar'}</button>
-    </div>
-  `).join('');
-  $('#services-table').innerHTML = html;
-
-  $('#services-table .primary-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const id = button.dataset.serviceId;
-      const status = button.dataset.status;
-      await fetch(`/api/services/${id}/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      loadDashboard();
-    });
-  });
+function renderUsers() {
+  const query = ($('#user-search').value || '').trim().toLowerCase();
+  const filtered = state.users.filter(user => user.username.toLowerCase().includes(query));
+  $('#user-table').innerHTML = filtered.map(user => `<tr><td><strong>${esc(user.username)}</strong></td><td>${user.max_sessions}</td><td>${esc(user.expires_on)}</td><td><span class="state ${user.status}">${user.status === 'active' ? 'Activo' : 'Suspendido'}</span></td><td>${esc(user.notes || '—')}</td><td><button class="table-action" data-edit="${user.id}">Editar</button><button class="table-action danger" data-delete="${user.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="6">No hay registros.</td></tr>';
+  $$('[data-edit]', $('#user-table')).forEach(button => button.addEventListener('click', () => openDialog(state.users.find(u => u.id === Number(button.dataset.edit)))));
+  $$('[data-delete]', $('#user-table')).forEach(button => button.addEventListener('click', () => deleteUser(Number(button.dataset.delete))));
 }
-
-function renderLogs(logs) {
-  $('#logs-list').innerHTML = logs.map(log => `
-    <div class="list-item">
-      <div>
-        <strong>${log.action}</strong>
-        <div class="tiny">${log.details}</div>
-      </div>
-      <span class="tiny">${formatDate(log.timestamp)}</span>
-    </div>
-  `).join('');
+function renderLimits() {
+  $('#limit-cards').innerHTML = state.users.map(user => `<article class="limit-card"><strong>${esc(user.username)}</strong><span>Máximo registrado: ${user.max_sessions}</span><small>No aplicado a sesiones reales.</small></article>`).join('') || '<p>No hay registros.</p>';
 }
-
-function bindNav() {
-  const navLinks = $$('.nav-link');
-  navLinks.forEach(link => {
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      const target = link.getAttribute('href').replace('#', '');
-      state.view = target;
-      $$('.nav-link').forEach(item => item.classList.toggle('active', item === link));
-      $$('.page').forEach(page => page.classList.toggle('active', page.id === target));
-      $('#page-title').textContent = link.textContent.trim();
-    });
-  });
+function renderExpiry() {
+  $('#expiry-table').innerHTML = [...state.users].sort((a,b) => a.expires_on.localeCompare(b.expires_on)).map(user => `<tr><td>${esc(user.username)}</td><td>${esc(user.expires_on)}</td><td><span class="state ${user.status}">${user.status === 'active' ? 'Activo' : 'Suspendido'}</span></td><td>${esc(user.notes || '—')}</td></tr>`).join('') || '<tr><td colspan="4">No hay registros.</td></tr>';
 }
-
-$('#login-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const data = Object.fromEntries(new FormData(e.target).entries());
-  const res = await fetch('/api/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  });
-  const result = await res.json();
-  if (!result.ok) {
-    alert(result.error || 'Error de autenticación');
-    return;
-  }
-  await checkSession();
+function renderLogs() {
+  const markup = state.logs.map(log => `<div class="list-item"><span><strong>${esc(log.action)}</strong><small>${esc(log.actor)} · ${esc(log.target)} · ${esc(log.detail)}</small></span><time>${esc(new Date(log.occurred_at).toLocaleString())}</time></div>`).join('');
+  $('#logs-list').innerHTML = markup || '<p>No hay eventos.</p>';
+  $('#audit-table').innerHTML = state.logs.slice(0,8).map(log => `<tr><td>${esc(new Date(log.occurred_at).toLocaleString())}</td><td>${esc(log.actor)}</td><td>${esc(log.action)}</td><td>${esc(log.target)}</td><td>${esc(log.detail)}</td></tr>`).join('') || '<tr><td colspan="5">No hay eventos.</td></tr>';
+}
+function openDialog(user = null) {
+  const form = $('#user-form'); form.reset(); $('#form-error').textContent = '';
+  $('#dialog-title').textContent = user ? 'Editar registro' : 'Agregar registro';
+  form.elements.id.value = user?.id || '';
+  form.elements.username.value = user?.username || '';
+  form.elements.max_sessions.value = user?.max_sessions || 1;
+  form.elements.expires_on.value = user?.expires_on || new Date().toISOString().slice(0,10);
+  form.elements.status.value = user?.status || 'active'; form.elements.notes.value = user?.notes || '';
+  $('#user-dialog').showModal();
+}
+async function deleteUser(id) {
+  const user = state.users.find(item => item.id === id);
+  if (!user || !confirm(`¿Eliminar el registro de ${user.username}? No se modifica ninguna cuenta del sistema.`)) return;
+  try { await api(`/api/users/${id}`, {method:'DELETE'}); await loadAll(); showToast('Registro eliminado.'); }
+  catch (error) { showToast(error.message); }
+}
+$('#login-form').addEventListener('submit', async event => {
+  event.preventDefault(); $('#login-error').textContent = '';
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  try {
+    const result = await api('/api/login', {method:'POST', body:JSON.stringify(values)});
+    state.user = result.user; state.csrf = result.csrf_token; $('#current-user').textContent = state.user;
+    showApp(); await loadAll();
+  } catch (error) { $('#login-error').textContent = error.message; }
 });
-
 $('#logout-btn').addEventListener('click', async () => {
-  await fetch('/api/logout', { method: 'POST' });
-  await checkSession();
+  try { await api('/api/logout', {method:'POST'}); state.user = null; state.csrf = null; showLogin(); }
+  catch (error) { showToast(error.message); }
 });
-
-$('#new-user-btn').addEventListener('click', () => {
-  $('#modal').classList.remove('hidden');
+$('#new-user-btn').addEventListener('click', () => openDialog());
+$('#close-dialog').addEventListener('click', () => $('#user-dialog').close());
+$('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close());
+$('#user-search').addEventListener('input', renderUsers);
+$('#user-form').addEventListener('submit', async event => {
+  event.preventDefault(); const form = event.currentTarget; const id = form.elements.id.value;
+  const payload = {username:form.elements.username.value, max_sessions:Number(form.elements.max_sessions.value), expires_on:form.elements.expires_on.value, status:form.elements.status.value, notes:form.elements.notes.value};
+  try {
+    await api(id ? `/api/users/${id}` : '/api/users', {method:id ? 'PUT' : 'POST', body:JSON.stringify(payload)});
+    $('#user-dialog').close(); await loadAll(); showToast('Registro guardado.');
+  } catch (error) { $('#form-error').textContent = error.message; }
 });
-
-$('#close-modal').addEventListener('click', () => {
-  $('#modal').classList.add('hidden');
-});
-
-$('#user-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const form = new FormData(e.target);
-  const payload = Object.fromEntries(form.entries());
-  const response = await fetch('/api/users', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  const result = await response.json();
-  if (!result.ok) {
-    alert(result.error || 'No se pudo crear el usuario');
-    return;
-  }
-  $('#modal').classList.add('hidden');
-  e.target.reset();
-  loadDashboard();
-});
-
-$('#user-search').addEventListener('input', () => {
-  if (state.user) {
-    fetch('/api/users')
-      .then(r => r.json())
-      .then(renderUsers);
-  }
-});
-
-checkSession();
+$$('.nav-link').forEach(link => link.addEventListener('click', event => {event.preventDefault(); const name=link.dataset.page; location.hash=name; setPage(name);}));
+window.addEventListener('hashchange', () => setPage(location.hash.slice(1)));
+setPage(location.hash.slice(1)); checkSession();
