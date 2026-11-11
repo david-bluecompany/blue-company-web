@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BLUE COMPANY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <div id="login-screen" class="login-screen hidden">
+      <div class="login-card">
+        <div class="login-brand">
+          <div class="brand-mark">BC</div>
+          <div>
+            <h1>BLUE COMPANY</h1>
+            <small>CLOUD NETWORK MANAGER</small>
+          </div>
+        </div>
+        <form id="login-form">
+          <label>
+            <span>Usuario</span>
+            <input type="text" name="username" value="admin" required>
+          </label>
+          <label>
+            <span>Contraseña</span>
+            <input type="password" name="password" value="admin123" required>
+          </label>
+          <button type="submit">Iniciar sesión</button>
+        </form>
+        <p class="login-hint">Demo default: admin / admin123</p>
+      </div>
+    </div>
+
+    <div id="app-shell" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark">BC</div>
+          <div>
+            <strong>BLUE COMPANY</strong>
+            <small>ENTERPRISE</small>
+          </div>
+        </div>
+        <nav class="nav">
+          <a href="#dashboard" class="nav-link active">Resumen</a>
+          <a href="#users" class="nav-link">Usuarios</a>
+          <a href="#limits" class="nav-link">Límites</a>
+          <a href="#services" class="nav-link">Servicios</a>
+          <a href="#security" class="nav-link">Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="admin-pill">ADMIN</div>
+          <button id="logout-btn" class="logout-btn">Cerrar sesión</button>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <small class="eyebrow">PANEL DE CONTROL</small>
+            <h2 id="page-title">Resumen</h2>
+          </div>
+          <div class="topbar-right">
+            <span class="live-badge">● En línea</span>
+            <span class="user-label" id="current-user">admin</span>
+          </div>
+        </header>
+
+        <section id="dashboard" class="page active">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-header"><span>Usuarios</span><span class="icon blue">♙</span></div>
+              <strong id="stat-users">0</strong>
+              <small id="stat-users-sub">activos</small>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header"><span>Sesiones</span><span class="icon green">⌁</span></div>
+              <strong id="stat-sessions">0</strong>
+              <small id="stat-sessions-sub">/ 42</small>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header"><span>Servicios</span><span class="icon purple">◈</span></div>
+              <strong id="stat-services">0</strong>
+              <small id="stat-services-sub">activos</small>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header"><span>Memoria</span><span class="icon orange">▤</span></div>
+              <strong id="stat-memory">0%</strong>
+              <small id="stat-memory-sub">uso</small>
+            </div>
+          </div>
+
+          <div class="panel-grid">
+            <div class="panel-card">
+              <div class="panel-head">
+                <h3>Estado del servidor</h3>
+                <span class="status success">Operativo</span>
+              </div>
+              <div class="server-box">
+                <div class="server-icon">▤</div>
+                <div>
+                  <strong id="server-name">blue-vps-demo</strong>
+                  <p id="server-meta">Ubuntu · Linux · 4 núcleos</p>
+                </div>
+                <div class="server-ip" id="server-ip">203.0.113.42</div>
+              </div>
+              <div class="resource-row">
+                <span>CPU</span>
+                <div class="progress"><div id="cpu-bar" style="width:38%"></div></div>
+                <b id="cpu-value">38%</b>
+              </div>
+              <div class="resource-row">
+                <span>RAM</span>
+                <div class="progress"><div id="ram-bar" style="width:62%"></div></div>
+                <b id="ram-value">62%</b>
+              </div>
+              <div class="resource-row">
+                <span>Disco</span>
+                <div class="progress"><div id="disk-bar" style="width:47%"></div></div>
+                <b id="disk-value">47%</b>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-head">
+                <h3>Servicios</h3>
+                <a href="#services">Ver más</a>
+              </div>
+              <div id="services-preview" class="list-stack"></div>
+            </div>
+          </div>
+
+          <div class="panel-card log-card">
+            <div class="panel-head"><h3>Actividad reciente</h3></div>
+            <table>
+              <thead>
+                <tr><th>FECHA</th><th>ACCIÓN</th><th>DETALLE</th></tr>
+              </thead>
+              <tbody id="audit-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="users" class="page">
+          <div class="toolbar">
+            <input type="text" id="user-search" placeholder="Buscar usuario...">
+            <button class="primary-btn" id="new-user-btn">Crear usuario</button>
+          </div>
+          <div class="panel-card">
+            <table>
+              <thead>
+                <tr><th>USUARIO</th><th>LÍMITE</th><th>EXPIRA</th><th>ESTADO</th><th>ACCIONES</th></tr>
+              </thead>
+              <tbody id="user-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="limits" class="page">
+          <div class="panel-card">
+            <div class="panel-head"><h3>Límites y conexiones</h3></div>
+            <div id="limit-cards" class="cards-grid"></div>
+          </div>
+        </section>
+
+        <section id="services" class="page">
+          <div class="panel-card">
+            <div class="panel-head"><h3>Servicios del sistema</h3></div>
+            <div id="services-table" class="stack-list"></div>
+          </div>
+        </section>
+
+        <section id="security" class="page">
+          <div class="panel-card">
+            <div class="panel-head"><h3>Auditoría</h3></div>
+            <div id="logs-list" class="stack-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="panel-head"><h3>Crear usuario</h3><button class="close-btn" id="close-modal">×</button></div>
+        <form id="user-form">
+          <label><span>Usuario</span><input type="text" name="username" required></label>
+          <label><span>Contraseña</span><input type="password" name="password" required></label>
+          <label><span>Límite de conexiones</span><input type="number" name="limit_connections" min="1" max="20" value="1"></label>
+          <label><span>Expira</span><input type="date" name="expiration"></label>
+          <button type="submit" class="primary-btn">Guardar</button>
+        </form>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

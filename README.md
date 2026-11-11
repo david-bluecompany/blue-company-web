@@ -1,27 +1,46 @@
-# BLUE COMPANY Web Panel (prototipo)
+# BLUE COMPANY Web Panel
 
-Prototipo web estático en español que convierte las secciones del menú de `BLUECOMPANY.sh` en una interfaz administrativa adaptable a móviles.
+Esta es una versión funcional mínima del panel administrativo BLUE COMPANY con:
+
+- login simple por sesión
+- dashboard con métricas
+- gestión de usuarios
+- activación/desactivación de servicios
+- auditoría básica
+- almacenamiento SQLite local
+
+## Requisitos
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
 ## Ejecutar
 
-Abre `index.html` en un navegador o sirve la carpeta con cualquier servidor estático, por ejemplo:
-
 ```bash
-cd web-panel
-python3 -m http.server 8000
+flask --app app run --debug
 ```
 
-Luego visita `http://localhost:8000`.
+Luego abre:
 
-## Incluye
+```text
+http://localhost:5000
+```
 
-- Resumen visual de métricas, servicios, actividad y vencimientos.
-- Navegación para usuarios, límites/sesiones, expiraciones, monitor, auditoría, servicios, diagnóstico y ajustes.
-- Búsqueda y filtro local de usuarios usando datos de demostración.
-- Diseño adaptable a escritorio y móvil.
+## Credenciales demo
 
-## Limitaciones importantes
+- Usuario: `admin`
+- Contraseña: `admin123`
 
-Este entregable es **solo un prototipo de interfaz**. No tiene autenticación, backend ni conexión con el VPS. Los usuarios, IPs, métricas, sesiones y registros son ficticios. Los botones de acción indican que están desactivados; no crean ni borran cuentas, no ejecutan comandos, no cambian servicios/firewall y no leen registros o procesos del host.
+## Nota
 
-No lo expongas a Internet ni lo uses para administrar un servidor tal como está. Antes de producción hacen falta autenticación y autorización robustas, protección CSRF, validación en servidor, auditoría, gestión segura de secretos y un agente con permisos mínimos que solo admita operaciones explícitas. No conectar el navegador a una shell ni aceptar comandos arbitrarios.
+Es un prototipo de panel administrativo. Antes de usarlo en producción hace falta:
+
+- autenticación real con hash de contraseñas
+- permisos por roles
+- validación de entradas
+- control de acceso a comandos del sistema
+- auditoría y logs más robustos
+- política de seguridad para servicios del host

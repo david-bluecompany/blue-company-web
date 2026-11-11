@@ -1,0 +1,261 @@
+from __future__ import annotations
+
+import os
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+from flask import Flask, jsonify, render_template, request, session, redirect, url_for
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "bluecompany.db"
+
+app = Flask(__name__, static_folder="static", template_folder="templates")
+app.secret_key = os.environ.get("SECRET_KEY", "blue-company-demo-secret")
+
+
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def ensure_db() -> None:
+    conn = get_db()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            limit_connections INTEGER NOT NULL DEFAULT 1,
+            expiration TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS services (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            port TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            description TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "SELECT COUNT(*) FROM users WHERE username = 'admin'"
+    )
+    if conn.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'").fetchone()[0] == 0:
+        conn.execute(
+            "INSERT INTO users (username, password, limit_connections, expiration, state, notes) VALUES (?, ?, ?, ?, ?, ?)",
+            ("admin", "admin123", 5, "2035-01-01", "active", "Default admin account")
+        )
+    if conn.execute("SELECT COUNT(*) FROM services").fetchone()[0] == 0:
+        defaults = [
+            ("OpenSSH", "22", "active", "Servidor SSH principal"),
+            ("Dropbear", "2222", "active", "Servidor Dropbear"),
+            ("Despachador WS", "80 / 8080 / 8880", "active", "Proxy WebSocket"),
+            ("BadVPN UDPGW", "7300", "inactive", "Servidor UDPGW"),
+            ("Auto-limitador", "24/7", "active", "Monitor de conexiones"),
+        ]
+        conn.executemany(
+            "INSERT INTO services (name, port, status, description) VALUES (?, ?, ?, ?)",
+            defaults,
+        )
+    conn.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE action = 'system_init'"
+    )
+    if conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'system_init'").fetchone()[0] == 0:
+        conn.execute(
+            "INSERT INTO audit_log (timestamp, action, details) VALUES (?, ?, ?)",
+            (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "system_init", "BLUE COMPANY demo panel initialized")
+        )
+    conn.commit()
+    conn.close()
+
+
+@app.before_request
+def _ensure_setup() -> None:
+    ensure_db()
+
+
+@app.route("/api/session")
+def api_session():
+    return jsonify({"logged_in": bool(session.get("user")), "user": session.get("user")})
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get("username") or "").strip()
+    password = (payload.get("password") or "").strip()
+
+    if not username or not password:
+        return jsonify({"ok": False, "error": "Usuario y contraseña obligatorios."}), 400
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT username, password FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    conn.close()
+
+    if row and row["password"] == password:
+        session["user"] = row["username"]
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO audit_log (timestamp, action, details) VALUES (?, ?, ?)",
+            (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "login", f"user={username}")
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True, "user": row["username"]})
+    return jsonify({"ok": False, "error": "Credenciales incorrectas."}), 401
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/dashboard")
+def api_dashboard():
+    conn = get_db()
+    users = conn.execute(
+        "SELECT COUNT(*) AS total, SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END) AS active FROM users"
+    ).fetchone()
+    services = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active FROM services").fetchone()
+    conn.close()
+
+    data = {
+        "totals": {
+            "users": int(users["total"] or 0),
+            "active_users": int(users["active"] or 0),
+            "services_total": int(services["total"] or 0),
+            "services_active": int(services["active"] or 0),
+            "server_load": 38,
+            "memory_used": 62,
+            "disk_used": 47,
+            "sessions": 18,
+            "limit": 42,
+        },
+        "server": {
+            "name": "blue-vps-demo",
+            "ip": "203.0.113.42",
+            "uptime": "12 días, 4 h",
+            "kernel": "6.8.0",
+            "os": "Ubuntu",
+        },
+    }
+    return jsonify(data)
+
+
+@app.route("/api/users")
+def api_users():
+    rows = get_db().execute(
+        "SELECT id, username, limit_connections, expiration, state FROM users ORDER BY username ASC"
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/users", methods=["POST"])
+def create_user():
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get("username") or "").strip()
+    password = (payload.get("password") or "").strip()
+    limit_connections = int(payload.get("limit_connections") or 1)
+    expiration = payload.get("expiration") or "2035-01-01"
+    state = (payload.get("state") or "active").strip()
+    if not username or not password:
+        return jsonify({"ok": False, "error": "Username y password obligatorios."}), 400
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO users (username, password, limit_connections, expiration, state) VALUES (?, ?, ?, ?, ?)",
+            (username, password, limit_connections, expiration, state),
+        )
+        conn.execute(
+            "INSERT INTO audit_log (timestamp, action, details) VALUES (?, ?, ?)",
+            (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "create_user", f"user={username}")
+        )
+        conn.commit()
+        return jsonify({"ok": True, "message": f"Usuario '{username}' creado."})
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "error": "El usuario ya existe."}), 409
+    finally:
+        conn.close()
+
+
+@app.route("/api/users/<int:user_id>/toggle", methods=["POST"])
+def toggle_user(user_id: int):
+    payload = request.get_json(silent=True) or {}
+    new_state = (payload.get("state") or "active").strip()
+    conn = get_db()
+    conn.execute(
+        "UPDATE users SET state = ? WHERE id = ?",
+        (new_state, user_id),
+    )
+    conn.execute(
+        "INSERT INTO audit_log (timestamp, action, details) VALUES (?, ?, ?)",
+        (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "toggle_user", f"user_id={user_id} state={new_state}")
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "state": new_state})
+
+
+@app.route("/api/services")
+def api_services():
+    rows = get_db().execute("SELECT id, name, port, status, description FROM services ORDER BY id ASC").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/services/<int:service_id>/toggle", methods=["POST"])
+def toggle_service(service_id: int):
+    payload = request.get_json(silent=True) or {}
+    new_status = (payload.get("status") or "active").strip()
+    conn = get_db()
+    conn.execute(
+        "UPDATE services SET status = ? WHERE id = ?",
+        (new_status, service_id),
+    )
+    conn.execute(
+        "INSERT INTO audit_log (timestamp, action, details) VALUES (?, ?, ?)",
+        (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "toggle_service", f"service_id={service_id} status={new_status}")
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "status": new_status})
+
+
+@app.route("/api/logs")
+def api_logs():
+    rows = get_db().execute("SELECT timestamp, action, details FROM audit_log ORDER BY id DESC LIMIT 20").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+if __name__ == "__main__":
+    ensure_db()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8000")), debug=True)
